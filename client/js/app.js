@@ -6,7 +6,7 @@ let currentUser = null;
 let accumulatedText = "";
 let streamTarget = "editor"; // Controls where the AI text goes (editor, modal, modal_split)
 let currentVersionHistory = [];
-
+let activeProjectId = null;
 // Guided Prompts State
 let currentUploadType = "";
 let promptFiles = {
@@ -33,6 +33,13 @@ window.addEventListener('DOMContentLoaded', () => {
     } else {
         showView('view-auth');
     }
+});// Add this immediately after the DOMContentLoaded block
+document.addEventListener('keypress', function (e) {
+    // Check if the user is typing specifically in the agent input
+    if (e.target.id === 'agent-input' && e.key === 'Enter') {
+        e.preventDefault(); // Prevent page refresh
+        sendToAgent();      // Trigger your existing send function
+    }
 });
 
 // ==========================================
@@ -57,6 +64,7 @@ function showView(viewId) {
 }
 
 function closeWorkspace() {
+    stopGeneration(); // Stop AI if user goes back to dashboard
     showView('view-dashboard');
 }
 
@@ -224,9 +232,17 @@ async function submitCreateProject() {
 // 6. WORKSPACE LOGIC
 // ==========================================
 async function openWorkspace(id, name, lob, dept) {
+    stopGeneration();
+    // Set the lock
+    activeProjectId = id; 
+    
+    // Reset AI context for the new project
+    accumulatedText = ""; 
+    streamTarget = "editor"; 
+    
+    // Clear the UI and existing state
     document.getElementById('ws-p-id').value = id;
     document.getElementById('ws-p-name').value = name;
-    
     const lobSelect = document.getElementById('ws-p-lob');
     if(lobSelect) lobSelect.value = lob;
 
@@ -462,7 +478,15 @@ function closeTocModal() {
 
 // UPDATED: Sets correct target for streaming
 function suggestTOCStructure() {
-    streamTarget = "modal_split"; // FORCE TARGET TO MODAL
+    // 1. START LOADING STATE
+    const suggestBtn = document.getElementById('toc-suggest-btn');
+    const loader = document.getElementById('suggest-loader');
+    
+    if(suggestBtn) suggestBtn.disabled = true;
+    if(loader) loader.style.display = 'block';
+
+    // 2. PREPARE UI
+    streamTarget = "modal_split"; 
     accumulatedText = "";
     
     document.getElementById('toc-structure').value = "";
@@ -471,21 +495,29 @@ function suggestTOCStructure() {
     const pName = document.getElementById('ws-p-name').value;
     const pLob = document.getElementById('ws-p-lob').value;
     
-    // Prompt asking for side-by-side content
-    window.api.sendMessage(`For project "${pName}" (LOB: ${pLob}), generate two things:
-1. A concise Project Summary/Description (What is this about?).
-2. A numbered list of BRD Structure Headings.
+    // 3. REFINED PROMPT
+    const prompt = `For the project "${pName}" (${pLob}), suggest a structure and summary. 
+    
+    CRITICAL INSTRUCTIONS: 
+    1. Under [STRUCTURE], provide ONLY a clean, numbered list of 5-10 headings. Do NOT write any paragraphs, descriptions, or document content in this section.
+    2. Under [SUMMARY], provide the project overview and background.
 
-You MUST separate them with the string "|||".
-Format:
-[Project Summary Text]
-|||
-[List of Headings]`);
+    Format your response EXACTLY like this:
+    [STRUCTURE]
+    1. Introduction
+    2. Scope
+    ...
+    
+    [SUMMARY]
+    (Project description here)`;
+
+    window.api.sendMessage(prompt);
 }
 
 function generateFullBRDFromTOC() {
     const pName = document.getElementById('ws-p-name').value;
     const pLob = document.getElementById('ws-p-lob').value;
+    const pDept = document.getElementById('ws-p-dept').value;
     
     const structure = document.getElementById('toc-structure').value;
     const summary = document.getElementById('toc-context').value;
@@ -493,60 +525,107 @@ function generateFullBRDFromTOC() {
 
     if(!structure && !summary) return;
 
+    // Start Loading State
+    toggleLoading('toc', true);
+    const mainChatLoader = document.getElementById('chat-loader');
+    if(mainChatLoader) mainChatLoader.style.display = 'block';
+
     closeTocModal();
-    streamTarget = "editor"; // SWITCH BACK TO MAIN EDITOR
+    streamTarget = "editor"; 
     document.getElementById('brd-editor').innerHTML = "";
     accumulatedText = "";
+
+    // CONSTRUCT THE PROJECT-SPECIFIC PROMPT
+    const prompt = `
+    SYSTEM: Act as a Senior Business Analyst. 
+    TASK: Generate a unique Business Requirements Document (BRD).
     
-    const prompt = `Generate a full Business Requirements Document (BRD) for Project "${pName}" (${pLob}) based on:
-    
-    [REQUIRED STRUCTURE/HEADINGS]
+    CLIENT CONTEXT:
+    - Project Name: ${pName}
+    - Line of Business: ${pLob}
+    - Department: ${pDept}
+
+    INSTRUCTIONS:
+    1. Base all content ONLY on the provided project name and context.
+    2. Use the following STRUCTURE as your skeleton:
     ${structure}
     
-    [PROJECT SUMMARY/CONTEXT]
+    3. Use this SUMMARY as the core project logic:
     ${summary}
     
-    [TARGET AUDIENCE/PERSONA]
+    4. Write for this TARGET AUDIENCE:
     ${persona}
-    
-    Please write the full document content following the structure provided. Use ### for main headers.`;
+
+    FORMATTING:
+    - Use ### for main headers.
+    - Be specific to ${pName}. If you mention "Project1" or generic placeholder names, the document will be invalid.
+    - Provide deep, professional detail for every section.
+    `;
 
     window.api.sendMessage(prompt);
 }
 
+
 function sendToAgent() {
     const val = document.getElementById('agent-input').value;
     if(!val) return;
+
+    toggleLoading('chat', true); // Start Loading
     
     document.getElementById('brd-editor').innerHTML += `<div style="background:#E3F2FD;padding:10px;margin:10px 0;"><strong>User:</strong> ${val}</div>`;
     
-    streamTarget = "editor"; // Explicitly set main editor target
+    streamTarget = "editor"; 
     window.api.sendMessage(val);
     document.getElementById('agent-input').value = "";
 }
 
 function handleAgentStream(chunk) {
-    // Force check: If modal is open, we likely want to fill the modal, unless user explicitly clicked "Send to Agent" from main view.
-    // The suggestTOCStructure sets 'modal_split'.
+    const currentWorkspaceId = document.getElementById('ws-p-id').value;
     
-    if (streamTarget === 'modal_split') {
-        accumulatedText += chunk;
-        const parts = accumulatedText.split("|||");
-        
-        // Fill Summary (Col 2)
-        if (parts[0]) {
-            document.getElementById('toc-context').value = parts[0].trim();
+    // 1. SESSION LOCK: Prevent data from an old project from leaking into the new one
+    if (activeProjectId !== currentWorkspaceId) {
+        console.warn("Ignoring stream chunk: Project mismatch.");
+        return; 
+    }
+
+    // 2. UNIVERSAL CLEANUP: Turn off all loaders
+    toggleLoading('all', false);
+
+    const loaders = ['chat-loader', 'toc-loader', 'suggest-loader'];
+    const buttons = ['chat-send-btn', 'toc-gen-btn', 'toc-suggest-btn'];
+    const inputs = ['agent-input'];
+
+    loaders.forEach(id => {
+        const el = document.getElementById(id);
+        if(el) el.style.display = 'none';
+    });
+
+    buttons.forEach(id => {
+        const el = document.getElementById(id);
+        if(el) el.disabled = false;
+    });
+
+    inputs.forEach(id => {
+        const el = document.getElementById(id);
+        if(el) el.disabled = false;
+    });
+
+    // 3. DATA PROCESSING (Added only once now)
+    accumulatedText += chunk;
+
+    if (streamTarget === "modal_split") {
+        // Splitting logic for the TOC Modal
+        if (accumulatedText.includes("[SUMMARY]")) {
+            const parts = accumulatedText.split("[SUMMARY]");
+            document.getElementById('toc-structure').value = parts[0].replace("[STRUCTURE]", "").trim();
+            document.getElementById('toc-context').value = parts[1].trim();
+        } else {
+            document.getElementById('toc-structure').value = accumulatedText.replace("[STRUCTURE]", "").trim();
         }
-        // Fill Structure (Col 1) only if separator arrived
-        if (parts.length > 1) {
-            document.getElementById('toc-structure').value = parts[1].trim();
-        }
-    } 
-    else {
-        // Default to Main Editor
+    } else {
+        // Default: Stream to the main BRD Editor
         const el = document.getElementById('brd-editor');
-        if(el) {
-            accumulatedText += chunk;
+        if (el) {
             let formatted = accumulatedText
                 .replace(/\n/g, "<br>")
                 .replace(/### (.*?)(<br>|$)/g, "<h3>$1</h3>")
@@ -578,6 +657,30 @@ function saveBRD() {
     const url = URL.createObjectURL(new Blob([html], {type:'application/msword'}));
     const a = document.createElement('a');
     a.href=url; a.download="BRD.doc"; a.click();
+}
+function stopGeneration() {
+    // 1. Tell the API to terminate the current stream/session
+    if (window.api && window.api.stopStream) {
+        window.api.stopStream();
+    }
+
+    // 2. Clear local accumulation to prevent leftovers in the next project
+    accumulatedText = "";
+    
+    // 3. Reset UI loaders and buttons
+    toggleLoading('all', false);
+    
+    console.log("AI Generation interrupted by user or system reset.");
+}
+function toggleLoading(type, isLoading) {
+    if (type === 'chat') {
+        document.getElementById('chat-loader').style.display = isLoading ? 'block' : 'none';
+        document.getElementById('chat-send-btn').disabled = isLoading;
+        document.getElementById('agent-input').disabled = isLoading;
+    } else if (type === 'toc') {
+        document.getElementById('toc-loader').style.display = isLoading ? 'block' : 'none';
+        document.getElementById('toc-gen-btn').disabled = isLoading;
+    }
 }
 
 // ==========================================

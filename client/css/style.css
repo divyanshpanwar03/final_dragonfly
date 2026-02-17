@@ -663,32 +663,45 @@ select:disabled {
 
 /* --- 3-COLUMN LAYOUT FOR TOC MODAL --- */
 /* Custom width for the large modal */
-#modal-toc .modal-content { 
-    width: 1000px; 
-    max-width: 95vw; 
+/* Update this in style.css */
+#modal-toc .modal-content {
+    width: 90vw;            /* Uses 90% of screen width */
+    max-width: 1100px;      /* Limits maximum width on large monitors */
+    height: 85vh;           /* Uses 85% of screen height instead of fixed pixels */
+    max-height: 800px;      /* Prevents it from getting too tall */
+    margin: 5vh auto;       /* Centers it vertically */
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;       /* Keeps the header and footer fixed */
 }
 
+/* Update the grid container */
+/* Update this block in style.css */
 .toc-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr; /* Equal columns: Structure | Summary | Persona */
+    /* This creates exactly 3 equal columns */
+    grid-template-columns: repeat(3, 1fr); 
     gap: 20px;
-    height: 600px; /* Fixed height for content area */
     padding: 20px;
+    align-items: start;
+    overflow-y: auto;
+    flex: 1;
 }
 
+/* Ensure each column container behaves correctly */
 .toc-col {
     display: flex;
     flex-direction: column;
-    gap: 5px;
+    min-width: 0; /* Prevents text overflow from breaking equal widths */
+    height: 100%;
 }
 
-.toc-col h4 {
-    margin: 0;
-    font-size: 14px;
-    color: #374151;
-    border-bottom: 2px solid var(--primary);
-    padding-bottom: 5px;
-    display: inline-block;
+/* Ensure the textareas and editors fill the equal column space */
+.toc-col textarea, 
+.toc-col .rte-container {
+    width: 100%;
+    min-height: 400px; /* Adjust this to make the popup shorter or taller */
+    box-sizing: border-box;
 }
 
 /* Textareas for Structure and Summary */
@@ -744,4 +757,55 @@ select:disabled {
     user-select: text;
     cursor: text;
     font-size: 13px;
+}
+@media (max-height: 700px) {
+    #modal-toc .modal-content {
+        height: 95vh;
+        margin: 2.5vh auto;
+    }
+    
+    .toc-col textarea, 
+    .rte-content {
+        height: 200px;      /* Even shorter for small laptop screens */
+    }
+}
+/* New Download Button Styling */
+.btn-download-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background-color: #D32F2F; /* Matching your brand red */
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+.btn-download-header:hover {
+    background-color: #B71C1C; /* Darker red on hover */
+}
+
+.btn-download-header .material-icons-outlined {
+    font-size: 18px; /* Scales the download icon correctly */
+}
+/* Spinner Animation */
+.rotate {
+    animation: rotation 2s infinite linear;
+    color: #D32F2F;
+    display: inline-block;
+}
+
+@keyframes rotation {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(359deg); }
+}
+
+/* UI protection during loading */
+input:disabled, button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed !important;
 }

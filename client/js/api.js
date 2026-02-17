@@ -4,6 +4,8 @@ const API_CONFIG = {
 };
 
 window.api = {
+    socket: null, // Holds the active connection
+
     login: async (username, password) => {
         const res = await fetch(`${API_CONFIG.BASE}/login`, {
             method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -52,7 +54,6 @@ window.api = {
         return await res.json();
     },
 
-    // NEW: Save Prompt Files
     saveProjectPrompts: async (id, prompts) => {
         const res = await fetch(`${API_CONFIG.BASE}/projects/${id}/prompts`, {
             method: 'PUT',
@@ -76,16 +77,40 @@ window.api = {
         return await res.json();
     },
 
-    socket: null,
+    // --- SOCKET LOGIC ---
     initSocket: (onMessage) => {
+        // Close existing socket if one is already open
+        if (window.api.socket) {
+            window.api.socket.close();
+        }
+
         window.api.socket = new WebSocket(API_CONFIG.WS);
+        
         window.api.socket.onmessage = (event) => {
             const data = JSON.parse(event.data);
             if (data.type === 'stream' && onMessage) onMessage(data.message);
         };
+
+        window.api.socket.onclose = () => console.log("Socket connection closed.");
+        window.api.socket.onerror = (err) => console.error("Socket error:", err);
     },
+
     sendMessage: (text) => {
         const s = window.api.socket;
-        if(s && s.readyState === WebSocket.OPEN) s.send(JSON.stringify({ input: text }));
+        if (s && s.readyState === WebSocket.OPEN) {
+            s.send(JSON.stringify({ input: text }));
+        } else {
+            console.error("Cannot send message: Socket is not open.");
+        }
+    },
+
+    // --- NEW: STOP STREAM FUNCTION ---
+    stopStream: () => {
+        const s = window.api.socket;
+        if (s && s.readyState === WebSocket.OPEN) {
+            // Sends a specific stop signal to the backend
+            s.send(JSON.stringify({ action: "stop" }));
+            console.log("Stop command sent to backend.");
+        }
     }
 };
